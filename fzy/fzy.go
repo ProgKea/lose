@@ -3,6 +3,7 @@ package fzy
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 type TxtRng struct {
@@ -22,14 +23,8 @@ type ScoredString struct {
 
 type ScoredStrings []ScoredString
 
-func (arr ScoredStrings) Len() int {
-	return len(arr)
-}
-
-func (arr ScoredStrings) Less(i, j int) bool {
-	a := arr[i]
-	b := arr[j]
-	if a.ScoreResult.Score == b.ScoreResult.Score {
+func ScoreResultLess(a, b ScoreResult) bool {
+	if a.Score == b.Score {
 		firstMatchIdx := func(matchRanges []TxtRng) uint {
 			result := uint(math.MaxUint)
 
@@ -41,18 +36,15 @@ func (arr ScoredStrings) Less(i, j int) bool {
 			return result
 		}
 
-		a_first_match_idx := firstMatchIdx(a.ScoreResult.MatchRanges)
-		b_first_match_idx := firstMatchIdx(b.ScoreResult.MatchRanges)
+		a_first_match_idx := firstMatchIdx(a.MatchRanges)
+		b_first_match_idx := firstMatchIdx(b.MatchRanges)
 		return a_first_match_idx < b_first_match_idx
 	}
-	return a.ScoreResult.Score < b.ScoreResult.Score
-}
-
-func (arr ScoredStrings) Swap(i, j int) {
-	arr[i], arr[j] = arr[j], arr[i]
+	return a.Score < b.Score
 }
 
 func Score(haystack, needle string) ScoreResult {
+	needle = strings.ReplaceAll(needle, " ", "")
 	var result ScoreResult
 
 	for haystack_idx := 0; haystack_idx < len(haystack); haystack_idx += 1 {
@@ -107,7 +99,7 @@ func ScoreMany(haystacks []string, needle string) ScoredStrings {
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return result.Less(j, i)
+		return ScoreResultLess(result[i].ScoreResult, result[j].ScoreResult)
 	})
 
 	return result
