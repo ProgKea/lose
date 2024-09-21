@@ -5,11 +5,16 @@ import (
 	"os"
 	"strings"
 
-	"code.sajari.com/docconv/v2"
+	"github.com/cheggaaa/go-poppler"
 	"golang.org/x/net/html"
 )
 
-func FromHtml(htmlData string) string {
+func FromHtml(filepath string) (string, error) {
+	htmlData, err := os.ReadFile(filepath)
+	if err != nil {
+		return "", err
+	}
+
 	var stringBuilder strings.Builder
 
 	tokenizer := html.NewTokenizer(strings.NewReader(string(htmlData)))
@@ -33,40 +38,45 @@ loop:
 		}
 	}
 
-	return stringBuilder.String()
+	return stringBuilder.String(), nil
 }
 
-func FromExtension(extension, data string) string {
+func FromPdf(filepath string) (string, error) {
+	doc, err := poppler.Open(filepath)
+	if err != nil {
+		return "", err
+	}
+
+	numPages := doc.GetNPages()
+	var texts []string
+	for i := 0; i < numPages; i += 1 {
+		texts = append(texts, doc.GetPage(i).Text())
+	}
+
+	return strings.Join(texts, " "), nil
+}
+
+func FromFilepath(filepath string) (string, error) {
+	var result string
+	var err error
+
+	var extension string
+	if parts := strings.Split(filepath, "."); len(parts) > 0 {
+		extension = parts[len(parts)-1]
+	}
+
 	switch extension {
 	case "html", "htm", "xhtml", "xml":
-		return FromHtml(data)
+		result, err = FromHtml(filepath)
+	case "pdf":
+		result, err = FromPdf(filepath)
+	case "md", "txt":
+		var bytes []byte
+		bytes, err = os.ReadFile(filepath)
+		result = string(bytes)
 	default:
-		fmt.Fprintf(os.Stderr, "warn: have no function for extension \"%v\" using unparsed data.\n", extension)
+		err = fmt.Errorf("filetype \"%v\" is not supported.", extension)
 	}
 
-	return data
-}
-
-func FromFilepath(filepath string) string {
-	var content string
-	res, err := docconv.ConvertPath(filepath)
-	if err != nil {
-		bytes, err := os.ReadFile(filepath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not read file \"%v\", exiting. (%v).\n", filepath, err)
-			os.Exit(1)
-		}
-
-		{
-			var extension string
-			if parts := strings.Split(filepath, "."); len(parts) > 0 {
-				extension = parts[len(parts)-1]
-			}
-			content = FromExtension(extension, string(bytes))
-		}
-	} else {
-		content = string(res.Body)
-	}
-
-	return content
+	return result, err
 }

@@ -58,7 +58,7 @@ func Score(haystack, needle string) ScoreResult {
 	needle = strings.ReplaceAll(needle, " ", "")
 	var result ScoreResult
 
-	haystackNeedlePair := HaystackNeedlePair{haystack, needle};
+	haystackNeedlePair := HaystackNeedlePair{haystack, needle}
 	if value, ok := ScoreCache[haystackNeedlePair]; ok {
 		result = value
 	} else {

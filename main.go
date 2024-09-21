@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +18,8 @@ import (
 	"github.com/ProgKea/lose/fzy"
 	"github.com/ProgKea/lose/txt"
 )
+
+const IndexFilepath = "lose.index"
 
 func termsFromString(str string) []string {
 	var result []string
@@ -60,69 +65,57 @@ func init() {
 	Logger = NewLogger()
 }
 
-type StringScoreMap map[string]float64
-type StringScorePair struct {
-	String string
-	Score  float64
+type stringScoreMap map[string]float64
+type stringScorePair struct {
+	string string
+	score  float64
 }
 
-type StringScorePairs []StringScorePair
-
-type Document struct {
-	filepath string
-	terms    []string
-	tfidf    StringScoreMap
+type document struct {
+	Filepath string
+	Terms    []string
+	Tfidf    stringScoreMap
+	Score    float64
 }
 
-func (doc Document) scoreFromNeedle(needle string) float64 {
+func (doc document) scoreFromNeedle(needle string) float64 {
 	var result float64
 
-	if score, ok := doc.tfidf[needle]; ok {
+	if score, ok := doc.Tfidf[needle]; ok {
 		result = score
 	} else {
-		type Match struct {
-			Score float64
+		type match struct {
+			score float64
 			fzy.ScoreResult
 		}
 		bestPossibleFzyScore := fzy.BestScoreFromNeedle(needle)
 		leeway := uint64(float64(len(needle)) * 0.3)
 		scoreWithLeeway := bestPossibleFzyScore - leeway
 
-		bestMatch := Match{}
-		for term, score := range doc.tfidf {
+		bestMatch := match{}
+		for term, score := range doc.Tfidf {
 			fzyMatch := fzy.Score(term, needle)
 			if fzyMatch.Score >= scoreWithLeeway && fzy.ScoreResultLess(bestMatch.ScoreResult, fzyMatch) {
-				bestMatch = Match{score, fzyMatch}
+				bestMatch = match{score, fzyMatch}
 			}
 		}
-		result = bestMatch.Score
+		result = bestMatch.score
 	}
 
 	return result
 }
 
 var (
-	needles []string
+	needles   []string
+	indexRoot string
 )
 
-func main() {
-	// Parse CLI Args
-	{
-		var needle string
-		flag.StringVar(&needle, "needle", "", "")
-		flag.Parse()
-
-		if len(needle) == 0 {
-			Logger.Error.Fatalln("No needle was provided")
-		}
-		needles = strings.Fields(needle)
-	}
-
+func index(root string) []document {
 	// Gather documents
-	var documents []Document
+	var documents []document
 	{
 		var filepaths []string
-		root := "./docs/docs.gl"
+		root := root
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -138,11 +131,16 @@ func main() {
 		}
 
 		for _, filepath := range filepaths {
-			documents = append(documents, Document{
-				filepath: filepath,
-				terms:    termsFromString(txt.FromFilepath(filepath)),
-				tfidf:    make(StringScoreMap),
-			})
+			content, err := txt.FromFilepath(filepath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warn: skipping \"%v\": %v\n", filepath, err)
+			} else {
+				documents = append(documents, document{
+					Filepath: filepath,
+					Terms:    termsFromString(content),
+					Tfidf:    make(stringScoreMap),
+				})
+			}
 		}
 	}
 
@@ -151,7 +149,7 @@ func main() {
 		var wg sync.WaitGroup
 
 		// Calculate TF, number of documents containg term t
-		numberOfDocumentsContainingTermT := make(StringScoreMap)
+		numberOfDocumentsContainingTermT := make(stringScoreMap)
 		var mutex sync.Mutex
 
 		// TF Pass
@@ -159,16 +157,15 @@ func main() {
 			for i := range documents {
 				wg.Add(1)
 
-				doc := &documents[i]
-				go func(doc *Document) {
+				go func(doc *document) {
 					defer wg.Done()
-					for _, term := range doc.terms {
-						doc.tfidf[term] += 1.0
+					for _, term := range doc.Terms {
+						doc.Tfidf[term] += 1.0
 					}
 
 					seen := make(map[string]bool)
-					termCount := float64(len(doc.terms))
-					for term := range doc.tfidf {
+					termCount := float64(len(doc.Terms))
+					for term := range doc.Tfidf {
 						if !seen[term] {
 							seen[term] = true
 							mutex.Lock()
@@ -176,9 +173,9 @@ func main() {
 							mutex.Unlock()
 						}
 
-						doc.tfidf[term] /= termCount
+						doc.Tfidf[term] /= termCount
 					}
-				}(doc)
+				}(&documents[i])
 			}
 
 			wg.Wait()
@@ -190,39 +187,105 @@ func main() {
 			for i := range documents {
 				wg.Add(1)
 
-				doc := &documents[i]
-				go func(doc *Document) {
+				go func(doc *document) {
 					defer wg.Done()
-					for key := range doc.tfidf {
+					for key := range doc.Tfidf {
 						idf := math.Log(documentCount / numberOfDocumentsContainingTermT[key])
-						doc.tfidf[key] *= idf
+						doc.Tfidf[key] *= idf
 					}
-				}(doc)
+				}(&documents[i])
 			}
 
 			wg.Wait()
 		}
 	}
 
+	// cache indexed documents
+	{
+		file, err := os.Create(IndexFilepath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: could not open index file \"%v\": %v\n", IndexFilepath, err)
+			os.Exit(1)
+		}
+		encoder := gob.NewEncoder(file)
+		if err := encoder.Encode(documents); err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to serialize documents: %v\n", err)
+		}
+	}
+
+	return documents
+}
+
+func docsFromIndexFile() ([]document, error) {
+	var result []document
+
+	indexData, err := os.ReadFile(IndexFilepath)
+	if err != nil {
+		return nil, err
+	}
+	indexReader := bytes.NewReader(indexData)
+	decoder := gob.NewDecoder(indexReader)
+
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func main() {
+	// Parse CLI Args
+	{
+		var needle string
+		flag.StringVar(&needle, "needle", "", "Your search query.")
+		flag.StringVar(&indexRoot, "index", "", "Path you want to index.")
+		flag.Parse()
+
+		if len(indexRoot) == 0 && len(needle) == 0 {
+			Logger.Error.Fatalln("No needle was provided")
+		}
+		needles = strings.Fields(needle)
+	}
+
+	if _, err := os.Stat(IndexFilepath); len(indexRoot) == 0 && errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "error: no index file was found. Use the -index flag to create one.")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// documents := index(indexRoot)
+	var documents []document
+	if len(indexRoot) == 0 {
+		docs, err := docsFromIndexFile()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: could not read index file \"%v\": %v\n", IndexFilepath, err)
+		}
+		documents = docs
+	} else {
+		documents = index(indexRoot)
+	}
+
+	if len(needles) == 0 {
+		os.Exit(0)
+	}
+
 	// Sort Documents by needle
 	{
-		sort.Slice(documents, func(i, j int) bool {
-			documentA := documents[i]
-			documentB := documents[j]
-
-			scoreA := 0.0
-			scoreB := 0.0
-
+		for i := range documents {
+			doc := &documents[i]
+			score := 0.0
 			for _, needle := range needles {
-				scoreA += documentA.scoreFromNeedle(needle)
-				scoreB += documentB.scoreFromNeedle(needle)
+				score += doc.scoreFromNeedle(needle)
 			}
+			doc.Score = score
+		}
 
-			return scoreB < scoreA
+		sort.Slice(documents, func(i, j int) bool {
+			return documents[j].Score < documents[i].Score
 		})
 	}
 
 	for _, document := range documents[:min(10, len(documents))] {
-		fmt.Println(document.filepath)
+		fmt.Println(document.Filepath)
 	}
 }
