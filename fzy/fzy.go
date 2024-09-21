@@ -71,11 +71,11 @@ func Score(haystack, needle string) ScoreResult {
 				txtRng = TxtRng{}
 			}
 
-			prev_found := 0
+			prevFound := 0
 			needle_idx := 0
-			for subhaystack_idx := haystack_idx; subhaystack_idx < len(haystack) && needle_idx < len(needle); subhaystack_idx += 1 {
-				if haystack[subhaystack_idx] == needle[needle_idx] {
-					if prev_found > 0 && subhaystack_idx-1 == prev_found {
+			for subHaystackIdx := haystack_idx; subHaystackIdx < len(haystack) && needle_idx < len(needle); subHaystackIdx += 1 {
+				if haystack[subHaystackIdx] == needle[needle_idx] {
+					if subHaystackIdx > 0 && subHaystackIdx-1 == prevFound {
 						current.Score += 5
 						txtRng.End += 1
 					} else {
@@ -85,11 +85,11 @@ func Score(haystack, needle string) ScoreResult {
 							pushTxtRng()
 						}
 
-						txtRng.Begin = uint(subhaystack_idx)
-						txtRng.End = uint(subhaystack_idx) + 1
+						txtRng.Begin = uint(subHaystackIdx)
+						txtRng.End = uint(subHaystackIdx) + 1
 					}
 					needle_idx += 1
-					prev_found = subhaystack_idx
+					prevFound = subHaystackIdx
 				}
 			}
 
@@ -106,6 +106,10 @@ func Score(haystack, needle string) ScoreResult {
 	}
 
 	return result
+}
+
+func BestScoreFromNeedle(needle string) uint64 {
+	return uint64(len(needle)*5 - 5 + 1)
 }
 
 func ScoreMany(haystacks []string, needle string) ScoredStrings {

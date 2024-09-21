@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,59 +13,41 @@ import (
 	"unicode"
 
 	"github.com/ProgKea/lose/fzy"
-	"golang.org/x/net/html"
+	"github.com/ProgKea/lose/txt"
 )
 
-func extractHtmlText(htmlData string) string {
-	var stringBuilder strings.Builder
-
-	tokenizer := html.NewTokenizer(strings.NewReader(string(htmlData)))
-	prevStartToken := tokenizer.Token()
-loop:
-	for {
-		token := tokenizer.Next()
-		switch {
-		case token == html.ErrorToken:
-			break loop
-		case token == html.StartTagToken:
-			prevStartToken = tokenizer.Token()
-		case token == html.TextToken:
-			if prevStartToken.Data == "script" {
-				continue
-			}
-			txt := strings.TrimSpace(html.UnescapeString(string(tokenizer.Text())))
-			if len(txt) > 0 {
-				stringBuilder.WriteString(txt)
-			}
-		}
-	}
-
-	return stringBuilder.String()
-}
-
-func stringToTerms(str string) []string {
+func termsFromString(str string) []string {
 	var result []string
-	for _, term := range strings.Fields(str) {
-		term = strings.TrimFunc(term, func(r rune) bool {
-			return !unicode.IsLetter(r)
-		})
-		term = strings.ToLower(term)
 
-		if len(term) > 0 {
-			result = append(result, term)
+	// Fill result
+	{
+		var sb strings.Builder
+		for _, codepoint := range str {
+			if !unicode.IsLetter(codepoint) {
+				if sb.Len() > 0 {
+					str := strings.ToLower(sb.String())
+					result = append(result, str)
+					sb.Reset()
+				}
+			} else {
+				sb.WriteRune(codepoint)
+			}
 		}
 	}
+
 	return result
 }
 
 type logger struct {
 	Info  *log.Logger
+	Warn  *log.Logger
 	Error *log.Logger
 }
 
 func NewLogger() *logger {
 	return &logger{
 		Info:  log.New(os.Stdout, "info: ", 0),
+		Warn:  log.New(os.Stdout, "warn: ", 0),
 		Error: log.New(os.Stderr, "error: ", 0),
 	}
 }
@@ -83,26 +66,39 @@ type StringScorePair struct {
 	Score  float64
 }
 
+type StringScorePairs []StringScorePair
+
 type Document struct {
-	filepath   string
-	terms      []string
-	tfidf      StringScoreMap
-	tfidfSlice []StringScorePair
+	filepath string
+	terms    []string
+	tfidf    StringScoreMap
 }
 
-func tfidfNeedleScore(tfidfSlice []StringScorePair, needle string) float64 {
-	type Match struct {
-		StringScorePair
-		fzy.ScoreResult
-	}
+func (doc Document) scoreFromNeedle(needle string) float64 {
+	var result float64
 
-	for _, stringScorePair := range tfidfSlice {
-		if stringScorePair.String == needle {
-			return stringScorePair.Score
+	if score, ok := doc.tfidf[needle]; ok {
+		result = score
+	} else {
+		type Match struct {
+			Score float64
+			fzy.ScoreResult
 		}
+		bestPossibleFzyScore := fzy.BestScoreFromNeedle(needle)
+		leeway := uint64(float64(len(needle)) * 0.3)
+		scoreWithLeeway := bestPossibleFzyScore - leeway
+
+		bestMatch := Match{}
+		for term, score := range doc.tfidf {
+			fzyMatch := fzy.Score(term, needle)
+			if fzyMatch.Score >= scoreWithLeeway && fzy.ScoreResultLess(bestMatch.ScoreResult, fzyMatch) {
+				bestMatch = Match{score, fzyMatch}
+			}
+		}
+		result = bestMatch.Score
 	}
 
-	return 0.0
+	return result
 }
 
 var (
@@ -119,14 +115,14 @@ func main() {
 		if len(needle) == 0 {
 			Logger.Error.Fatalln("No needle was provided")
 		}
-
 		needles = strings.Fields(needle)
 	}
 
+	// Gather documents
 	var documents []Document
 	{
 		var filepaths []string
-		root := "./docs/php"
+		root := "./docs/docs.gl"
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -142,42 +138,37 @@ func main() {
 		}
 
 		for _, filepath := range filepaths {
-			if strings.HasSuffix(filepath, ".html") {
-				dataBytes, err := os.ReadFile(filepath)
-				if err != nil {
-					Logger.Error.Fatalf("Could not read file \"%v\": %v", filepath, err)
-				}
-
-				documents = append(documents, Document{
-					filepath: filepath,
-					terms:    stringToTerms(extractHtmlText(string(dataBytes))),
-					tfidf:    make(StringScoreMap),
-				})
-			}
+			documents = append(documents, Document{
+				filepath: filepath,
+				terms:    termsFromString(txt.FromFilepath(filepath)),
+				tfidf:    make(StringScoreMap),
+			})
 		}
 	}
 
+	// TFIDF
 	{
 		var wg sync.WaitGroup
 
 		// Calculate TF, number of documents containg term t
 		numberOfDocumentsContainingTermT := make(StringScoreMap)
 		var mutex sync.Mutex
+
 		// TF Pass
 		{
 			for i := range documents {
 				wg.Add(1)
 
 				doc := &documents[i]
-				go func() {
+				go func(doc *Document) {
 					defer wg.Done()
 					for _, term := range doc.terms {
 						doc.tfidf[term] += 1.0
 					}
 
 					seen := make(map[string]bool)
-					term_count := float64(len(doc.terms))
-					for _, term := range doc.terms {
+					termCount := float64(len(doc.terms))
+					for term := range doc.tfidf {
 						if !seen[term] {
 							seen[term] = true
 							mutex.Lock()
@@ -185,9 +176,9 @@ func main() {
 							mutex.Unlock()
 						}
 
-						doc.tfidf[term] /= term_count
+						doc.tfidf[term] /= termCount
 					}
-				}()
+				}(doc)
 			}
 
 			wg.Wait()
@@ -200,55 +191,38 @@ func main() {
 				wg.Add(1)
 
 				doc := &documents[i]
-				go func() {
+				go func(doc *Document) {
 					defer wg.Done()
 					for key := range doc.tfidf {
-						idf := documentCount / numberOfDocumentsContainingTermT[key]
-						doc.tfidf[key] = doc.tfidf[key] * idf
+						idf := math.Log(documentCount / numberOfDocumentsContainingTermT[key])
+						doc.tfidf[key] *= idf
 					}
-				}()
+				}(doc)
 			}
 
 			wg.Wait()
 		}
+	}
 
-		// Convert Hashmaps to array
-		{
-			for i := range documents {
-				wg.Add(1)
+	// Sort Documents by needle
+	{
+		sort.Slice(documents, func(i, j int) bool {
+			documentA := documents[i]
+			documentB := documents[j]
 
-				doc := &documents[i]
-				go func() {
-					defer wg.Done()
-					for key, value := range doc.tfidf {
-						doc.tfidfSlice = append(doc.tfidfSlice, StringScorePair{String: key, Score: value})
-					}
-				}()
+			scoreA := 0.0
+			scoreB := 0.0
+
+			for _, needle := range needles {
+				scoreA += documentA.scoreFromNeedle(needle)
+				scoreB += documentB.scoreFromNeedle(needle)
 			}
 
-			wg.Wait()
-		}
+			return scoreB < scoreA
+		})
+	}
 
-		// Sort documents by needle
-		{
-			sort.Slice(documents, func(i, j int) bool {
-				scoreA := 0.0
-				scoreB := 0.0
-
-				for _, needle := range needles {
-					documentA := documents[i]
-					documentB := documents[j]
-
-					scoreA += tfidfNeedleScore(documentA.tfidfSlice, needle)
-					scoreB += tfidfNeedleScore(documentB.tfidfSlice, needle)
-				}
-
-				return scoreB < scoreA
-			})
-		}
-
-		for _, document := range documents[:5] {
-			fmt.Println(document.filepath)
-		}
+	for _, document := range documents[:min(10, len(documents))] {
+		fmt.Println(document.filepath)
 	}
 }
