@@ -53,7 +53,7 @@
         searchResults.push(
             tr(
                 td(entry.filepath)
-                    .pushClass("filepath")
+                    .pushClass("copyable")
                     .setClickFunc(function (e) {
                         navigator.clipboard.writeText(this.innerText);
                     }),
@@ -62,15 +62,28 @@
         )
     }
 
+    function notFound() {
+        return p("No results :(");
+    }
+
     searchInput.onkeypress = async function (e) {
         if (e.key === "Enter") {
             e.preventDefault();
             const response = await fetch(`/search?needle=${encodeURI(searchInput.value)}`, {
                 method: "GET",
             });
-            const json = await response.json();
+            const results = await response.json();
             searchResults.innerHTML = "";
-            json.forEach(addSearchResult);
+            if (results[0].score == 0) {
+                searchResults.push(notFound());
+            } else {
+                for (const result of results) {
+                    if (result.score === 0) {
+                        break;
+                    }
+                    addSearchResult(result);
+                }
+            }
         }
     };
 })();

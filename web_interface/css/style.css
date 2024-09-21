@@ -1,7 +1,60 @@
-.filepath:hover {
-    cursor: copy;
+:root {
+    --fg: #B99468;
+    --bg: #101010;
+    --table-entry-bg-color: var(--bg);
+    --caret: #00FF00;
 }
 
-#searchResults>tr>td {
-    padding-right: 10px;
+html,* {
+    font-family: sans-serif !important;
+    font-size: 40px;
+}
+
+* {
+    color: var(--fg);
+    background-color: var(--bg);
+}
+
+#lose {
+    background-image: linear-gradient(rgb(0 0 0/90%) 0 0);
+    padding: 10px;
+    position: absolute;
+    left: 50%;
+    top: 20%;
+    transform: translateX(-50%);
+    width: 75%;
+}
+
+#lose>input {
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+#lose>table {
+    width: 100%;
+}
+
+input {
+    border: none;
+    background-image: linear-gradient(rgb(0 0 0/110%) 0 0);
+    caret-color: var(--caret);
+}
+
+.copyable {
+    font-family: monospace !important;
+}
+
+.copyable:hover {
+    cursor: copy;
+    filter: brightness(80%);
+}
+
+.copyable:active {
+    filter: brightness(70%);
+}
+
+th, td {
+    padding-bottom: 15px;
+    background-color: var(--table-entry-bg-color);
+    padding: 10px;
 }

@@ -317,7 +317,7 @@ func main() {
 
 				var byteBuffer bytes.Buffer
 				encoder := json.NewEncoder(&byteBuffer)
-				encoder.Encode(documents[:min(len(documents), 10)])
+				encoder.Encode(documents[:min(len(documents), 50)])
 				w.Write(byteBuffer.Bytes())
 			}
 		})
