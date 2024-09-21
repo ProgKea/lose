@@ -1,0 +1,7 @@
+.filepath:hover {
+    cursor: copy;
+}
+
+#searchResults>tr>td {
+    padding-right: 10px;
+}

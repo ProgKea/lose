@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -78,6 +80,20 @@ type document struct {
 	Score    float64
 }
 
+func (doc document) MarshalJSON() ([]byte, error) {
+	type documentJson struct {
+		Filepath string  `json:"filepath"`
+		Score    float64 `json:"score"`
+	}
+
+	docJson := documentJson{doc.Filepath, doc.Score}
+
+	var byteBuffer bytes.Buffer
+	encoder := json.NewEncoder(&byteBuffer)
+	err := encoder.Encode(docJson)
+	return byteBuffer.Bytes(), err
+}
+
 func (doc document) scoreFromNeedle(needle string) float64 {
 	var result float64
 
@@ -89,8 +105,7 @@ func (doc document) scoreFromNeedle(needle string) float64 {
 			fzy.ScoreResult
 		}
 		bestPossibleFzyScore := fzy.BestScoreFromNeedle(needle)
-		leeway := uint64(float64(len(needle)) * 0.3)
-		scoreWithLeeway := bestPossibleFzyScore - leeway
+		scoreWithLeeway := uint64(float64(bestPossibleFzyScore) * 0.8)
 
 		bestMatch := match{}
 		for term, score := range doc.Tfidf {
@@ -108,9 +123,10 @@ func (doc document) scoreFromNeedle(needle string) float64 {
 var (
 	needles   []string
 	indexRoot string
+	serve     bool
 )
 
-func index(root string) []document {
+func index(root string) ([]document, error) {
 	// Gather documents
 	var documents []document
 	{
@@ -127,7 +143,7 @@ func index(root string) []document {
 		})
 
 		if err != nil {
-			Logger.Error.Printf("Error walking path: \"%v\": %v\n", root, err)
+			return nil, fmt.Errorf("Error walking path: \"%v\": %v\n", root, err)
 		}
 
 		for _, filepath := range filepaths {
@@ -213,7 +229,7 @@ func index(root string) []document {
 		}
 	}
 
-	return documents
+	return documents, nil
 }
 
 func docsFromIndexFile() ([]document, error) {
@@ -233,17 +249,16 @@ func docsFromIndexFile() ([]document, error) {
 	return result, nil
 }
 
+const PORT = "8080"
+
 func main() {
 	// Parse CLI Args
 	{
 		var needle string
 		flag.StringVar(&needle, "needle", "", "Your search query.")
 		flag.StringVar(&indexRoot, "index", "", "Path you want to index.")
+		flag.BoolVar(&serve, "serve", false, "serve a web interface.")
 		flag.Parse()
-
-		if len(indexRoot) == 0 && len(needle) == 0 {
-			Logger.Error.Fatalln("No needle was provided")
-		}
 		needles = strings.Fields(needle)
 	}
 
@@ -253,39 +268,63 @@ func main() {
 		os.Exit(1)
 	}
 
-	// documents := index(indexRoot)
 	var documents []document
 	if len(indexRoot) == 0 {
-		docs, err := docsFromIndexFile()
+		var err error
+		documents, err = docsFromIndexFile()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: could not read index file \"%v\": %v\n", IndexFilepath, err)
+			os.Exit(1)
 		}
-		documents = docs
 	} else {
-		documents = index(indexRoot)
-	}
-
-	if len(needles) == 0 {
-		os.Exit(0)
-	}
-
-	// Sort Documents by needle
-	{
-		for i := range documents {
-			doc := &documents[i]
-			score := 0.0
-			for _, needle := range needles {
-				score += doc.scoreFromNeedle(needle)
-			}
-			doc.Score = score
+		var err error
+		documents, err = index(indexRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: failed to index: %v\n", err)
+			os.Exit(1)
 		}
-
-		sort.Slice(documents, func(i, j int) bool {
-			return documents[j].Score < documents[i].Score
-		})
 	}
 
-	for _, document := range documents[:min(10, len(documents))] {
-		fmt.Println(document.Filepath)
+	if serve {
+		http.Handle("/", http.FileServer(http.Dir("web_interface")))
+
+		http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "GET" {
+				needle := r.URL.Query().Get("needle")
+
+				if len(needle) == 0 {
+					w.WriteHeader(200)
+					return
+				}
+
+				needles = strings.Fields(needle)
+
+				// Sort Documents by needle
+				{
+					for i := range documents {
+						doc := &documents[i]
+						score := 0.0
+						for _, needle := range needles {
+							score += doc.scoreFromNeedle(needle)
+						}
+						doc.Score = score
+					}
+
+					sort.Slice(documents, func(i, j int) bool {
+						return documents[j].Score < documents[i].Score
+					})
+				}
+
+				var byteBuffer bytes.Buffer
+				encoder := json.NewEncoder(&byteBuffer)
+				encoder.Encode(documents[:min(len(documents), 10)])
+				w.Write(byteBuffer.Bytes())
+			}
+		})
+
+		fmt.Printf("Listening on port: %v\n", PORT)
+		log.Fatal(http.ListenAndServe(":"+PORT, nil))
 	}
 }
+
+// TODO: Search for synonyms aswell
