@@ -95,6 +95,10 @@ func (doc document) MarshalJSON() ([]byte, error) {
 }
 
 func (doc document) scoreFromNeedle(needle string) float64 {
+	return doc.Tfidf[needle]
+}
+
+func (doc document) scoreFromNeedleFzy(needle string) float64 {
 	var result float64
 
 	if score, ok := doc.Tfidf[needle]; ok {
@@ -105,7 +109,7 @@ func (doc document) scoreFromNeedle(needle string) float64 {
 			fzy.ScoreResult
 		}
 		bestPossibleFzyScore := fzy.BestScoreFromNeedle(needle)
-		scoreWithLeeway := uint64(float64(bestPossibleFzyScore) * 0.8)
+		scoreWithLeeway := uint64(float64(bestPossibleFzyScore) * 0.5)
 
 		bestMatch := match{}
 		for term, score := range doc.Tfidf {
@@ -249,6 +253,55 @@ func docsFromIndexFile() ([]document, error) {
 	return result, nil
 }
 
+type queryParseResult struct {
+	needles      []string
+	fuzzyNeedles []string
+}
+
+func queryParse(query string) queryParseResult {
+	var result queryParseResult
+
+	byteIsQuote := func(b byte) bool {
+		return b == '"' || b == '\''
+	}
+
+	for i := 0; i < len(query); i += 1 {
+		var begin uint
+		var end uint
+
+		insideQuote := false
+		if byteIsQuote(query[i]) {
+			insideQuote = true
+			i += 1
+			begin = uint(i)
+			for ; i <= len(query); i += 1 {
+				if i == len(query) || byteIsQuote(query[i]) {
+					end = uint(i - 1)
+					break
+				}
+			}
+		} else {
+			begin = uint(i)
+			for ; i < len(query); i += 1 {
+				if !byteIsQuote(query[i]) {
+					end = uint(i)
+				}
+			}
+		}
+
+		needles := strings.Fields(query[begin : end+1])
+		for _, needle := range needles {
+			if insideQuote {
+				result.needles = append(result.needles, needle)
+			} else {
+				result.fuzzyNeedles = append(result.fuzzyNeedles, needle)
+			}
+		}
+	}
+
+	return result
+}
+
 const PORT = "8080"
 
 func main() {
@@ -290,23 +343,29 @@ func main() {
 
 		http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "GET" {
-				needle := r.URL.Query().Get("needle")
+				query := r.URL.Query().Get("query")
 
-				if len(needle) == 0 {
+				if len(query) == 0 {
 					w.WriteHeader(200)
 					return
 				}
 
-				needles = strings.Fields(needle)
+				queryParseResult := queryParse(query)
 
 				// Sort Documents by needle
 				{
 					for i := range documents {
 						doc := &documents[i]
 						score := 0.0
-						for _, needle := range needles {
+
+						for _, needle := range queryParseResult.needles {
 							score += doc.scoreFromNeedle(needle)
 						}
+
+						for _, needle := range queryParseResult.fuzzyNeedles {
+							score += doc.scoreFromNeedleFzy(needle)
+						}
+
 						doc.Score = score
 					}
 
@@ -322,9 +381,7 @@ func main() {
 			}
 		})
 
-		fmt.Printf("Listening on port: %v\n", PORT)
+		fmt.Printf("listening on port %v\n", PORT)
 		log.Fatal(http.ListenAndServe(":"+PORT, nil))
 	}
 }
-
-// TODO: Search for synonyms aswell

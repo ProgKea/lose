@@ -1,3 +1,4 @@
+/* Global */
 :root {
     --fg: #B99468;
     --bg: #101010;
@@ -15,8 +16,9 @@ html,* {
     background-color: var(--bg);
 }
 
+/* Search Results */
+
 #lose {
-    background-image: linear-gradient(rgb(0 0 0/90%) 0 0);
     padding: 10px;
     position: absolute;
     left: 50%;
@@ -25,20 +27,41 @@ html,* {
     width: 75%;
 }
 
-#lose>input {
-    width: 100%;
-    margin-bottom: 20px;
-}
-
 #lose>table {
     width: 100%;
 }
 
-input {
+th, td {
+    padding-bottom: 15px;
+    background-color: var(--table-entry-bg-color);
+    padding: 10px;
+}
+
+/* Search Input */
+
+#searchInput {
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+#searchInput {
+    padding: 10px;
     border: none;
+    background-color: black;
     background-image: linear-gradient(rgb(0 0 0/110%) 0 0);
     caret-color: var(--caret);
 }
+
+[contenteditable] {
+    /* https://stackoverflow.com/questions/19647290/how-to-preserve-white-spaces-in-content-editable-div */
+    white-space: pre-wrap;       /* css-3 */
+    white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+    white-space: -pre-wrap;      /* Opera 4-6 */
+    white-space: -o-pre-wrap;    /* Opera 7 */
+    word-wrap: break-word;       /* Internet Explorer 5.5+ */
+}
+
+/* Copyable */
 
 .copyable {
     font-family: monospace !important;
@@ -53,8 +76,9 @@ input {
     filter: brightness(70%);
 }
 
-th, td {
-    padding-bottom: 15px;
-    background-color: var(--table-entry-bg-color);
-    padding: 10px;
+/* syntax highlighting */
+
+.string-literal {
+    color: #FFA900;
+    background: #00000000;
 }
