@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"math"
 	"net/http"
@@ -344,21 +345,12 @@ func main() {
 	}
 
 	if serve {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFileFS(w, r, webInterface, "web_interface/index.html");
-		})
-
-		http.HandleFunc("/lose.js", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFileFS(w, r, webInterface, "web_interface/lose.js");
-		})
-
-		http.HandleFunc("/css/style.css", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFileFS(w, r, webInterface, "web_interface/css/style.css");
-		})
-
-		http.HandleFunc("/css/reset.css", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFileFS(w, r, webInterface, "web_interface/css/reset.css");
-		})
+		webInterfaceWithoutParentFolder, err := fs.Sub(webInterface, "web_interface")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: could not create sub fs from embedded web interface: %v\n", err)
+			os.Exit(1)
+		}
+		http.Handle("/", http.FileServerFS(webInterfaceWithoutParentFolder))
 
 		http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "GET" {
@@ -377,12 +369,19 @@ func main() {
 						doc := &documents[i]
 						score := 0.0
 
+						filepathContainsNeedleBonus := 0.5
 						for _, needle := range queryParseResult.needles {
 							score += doc.scoreFromNeedle(needle)
+							if strings.Contains(doc.Filepath, needle) {
+								score += filepathContainsNeedleBonus
+							}
 						}
 
 						for _, needle := range queryParseResult.fuzzyNeedles {
 							score += doc.scoreFromNeedleFzy(needle)
+							if strings.Contains(doc.Filepath, needle) {
+								score += filepathContainsNeedleBonus
+							}
 						}
 
 						doc.Score = score
@@ -404,3 +403,5 @@ func main() {
 		log.Fatal(http.ListenAndServe(":"+PORT, nil))
 	}
 }
+
+// TODO: consider the filename when ranking the results
