@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/gob"
 	"encoding/json"
 	"errors"
@@ -291,6 +292,7 @@ func queryParse(query string) queryParseResult {
 
 		needles := strings.Fields(query[begin : end+1])
 		for _, needle := range needles {
+			needle = strings.ToLower(needle)
 			if insideQuote {
 				result.needles = append(result.needles, needle)
 			} else {
@@ -303,6 +305,9 @@ func queryParse(query string) queryParseResult {
 }
 
 const PORT = "8080"
+
+//go:embed web_interface/*
+var webInterface embed.FS
 
 func main() {
 	// Parse CLI Args
@@ -339,7 +344,21 @@ func main() {
 	}
 
 	if serve {
-		http.Handle("/", http.FileServer(http.Dir("web_interface")))
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, webInterface, "web_interface/index.html");
+		})
+
+		http.HandleFunc("/lose.js", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, webInterface, "web_interface/lose.js");
+		})
+
+		http.HandleFunc("/css/style.css", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, webInterface, "web_interface/css/style.css");
+		})
+
+		http.HandleFunc("/css/reset.css", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, webInterface, "web_interface/css/reset.css");
+		})
 
 		http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == "GET" {
