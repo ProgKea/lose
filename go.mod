@@ -7,4 +7,7 @@ require (
 	golang.org/x/net v0.29.0
 )
 
-require github.com/ungerik/go-cairo v0.0.0-20210317133935-984b32e6bac6 // indirect
+require (
+	github.com/kljensen/snowball v0.10.0 // indirect
+	github.com/ungerik/go-cairo v0.0.0-20210317133935-984b32e6bac6 // indirect
+)

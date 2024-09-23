@@ -145,7 +145,7 @@
             return this.substring(0, index) + string + this.substring(index, this.length);
         }
 
-        function stringRangesFromString(string) {
+        function fzyRangesFromString(string) {
             if (typeof string !== "string") {
                 return;
             }
@@ -154,13 +154,13 @@
 
             const stringLength = string.length;
             for (let i = 0; i < stringLength; ++i) {
-                if (string[i] == '"' || string[i] == '\'') {
+                if (string[i] == '*') {
                     const begin = i;
 
                     i += 1;
                     let found = false;
                     for (; i < stringLength; ++i) {
-                        if (string[i] == '"' || string[i] == '\'') {
+                        if (string[i] == '*') {
                             i += 1;
                             const end = i;
                             result.push(new Rng(begin, end));
@@ -175,8 +175,6 @@
                     }
                 }
             }
-
-            console.log(result);
 
             return result;
         }
@@ -200,7 +198,7 @@
     }
 
     searchInput.oninput = function (e) {
-        const ranges = stringRangesFromString(this.innerText);
+        const ranges = fzyRangesFromString(this.innerText);
         let coloredHtml = this.innerText;
 
         const searchInputClone = searchInput.cloneNode();

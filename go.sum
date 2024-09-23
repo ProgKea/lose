@@ -1,5 +1,7 @@
 github.com/cheggaaa/go-poppler v0.0.1 h1:dT3r2DzwWrq9m49ED2xeBFx7SAS6vdNwt4gmAszl+tE=
 github.com/cheggaaa/go-poppler v0.0.1/go.mod h1:lw99/FtbqY/iD6peEN6rYVfokv0qdEXfAtURmrYVfFE=
+github.com/kljensen/snowball v0.10.0 h1:8qgaBLraSuUVHtGH5tJ+VdGpqgfcaE2WkswL/C3nVhY=
+github.com/kljensen/snowball v0.10.0/go.mod h1:bJcxtur1W5Qw4fVj9tk5W88zyRcGQQjqahFErdcDTHk=
 github.com/ungerik/go-cairo v0.0.0-20210317133935-984b32e6bac6 h1:KrKqo3an56mwfObaZtHlyhN+IVDyw1XaoIT5Cr2Ttvk=
 github.com/ungerik/go-cairo v0.0.0-20210317133935-984b32e6bac6/go.mod h1:yLTJg56omDJ+JVxZ5whpCrZgQdaSs+OBdFa+X6ViJcI=
 golang.org/x/net v0.29.0 h1:5ORfpBpCs4HzDYoodCDBbwHzdR5UrLBZ3sOnUJmFoHo=

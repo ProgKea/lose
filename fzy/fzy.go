@@ -2,7 +2,6 @@ package fzy
 
 import (
 	"math"
-	"sort"
 	"strings"
 )
 
@@ -112,17 +111,25 @@ func BestScoreFromNeedle(needle string) uint64 {
 	return uint64(len(needle)*5 - 5 + 1)
 }
 
-func ScoreMany(haystacks []string, needle string) ScoredStrings {
-	result := make(ScoredStrings, len(haystacks))
+type MapGetResult[T any] struct {
+	ScoreResult
+	Key   string
+	Value T
+}
 
-	for i, haystack := range haystacks {
-		scoreResult := Score(haystack, needle)
-		result[i] = ScoredString{haystack, scoreResult}
+func MapGet[T any](m map[string]T, needle string) MapGetResult[T] {
+	var result MapGetResult[T]
+
+	for haystack, value := range m {
+		score := Score(haystack, needle)
+		if ScoreResultLess(result.ScoreResult, score) {
+			result = MapGetResult[T]{
+				ScoreResult: score,
+				Key:         haystack,
+				Value:       value,
+			}
+		}
 	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return ScoreResultLess(result[i].ScoreResult, result[j].ScoreResult)
-	})
 
 	return result
 }

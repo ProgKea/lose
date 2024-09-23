@@ -21,7 +21,16 @@ import (
 
 	"github.com/ProgKea/lose/fzy"
 	"github.com/ProgKea/lose/txt"
+	"github.com/kljensen/snowball"
 )
+
+func stemFromString(str string) string {
+	result := strings.TrimSpace(str)
+	if stemmed, err := snowball.Stem(result, "english", true); err == nil {
+		result = stemmed
+	}
+	return result
+}
 
 const IndexFilepath = "lose.index"
 
@@ -35,6 +44,7 @@ func termsFromString(str string) []string {
 			if !unicode.IsLetter(codepoint) {
 				if sb.Len() > 0 {
 					str := strings.ToLower(sb.String())
+					str = stemFromString(str)
 					result = append(result, str)
 					sb.Reset()
 				}
@@ -47,28 +57,6 @@ func termsFromString(str string) []string {
 	return result
 }
 
-type logger struct {
-	Info  *log.Logger
-	Warn  *log.Logger
-	Error *log.Logger
-}
-
-func NewLogger() *logger {
-	return &logger{
-		Info:  log.New(os.Stdout, "info: ", 0),
-		Warn:  log.New(os.Stdout, "warn: ", 0),
-		Error: log.New(os.Stderr, "error: ", 0),
-	}
-}
-
-var (
-	Logger *logger
-)
-
-func init() {
-	Logger = NewLogger()
-}
-
 type stringScoreMap map[string]float64
 type stringScorePair struct {
 	string string
@@ -76,10 +64,10 @@ type stringScorePair struct {
 }
 
 type document struct {
-	Filepath string
-	Terms    []string
-	Tfidf    stringScoreMap
-	Score    float64
+	Filepath         string
+	Terms            []string
+	TfidfVector      stringScoreMap
+	CosineSimilarity float64
 }
 
 func (doc document) MarshalJSON() ([]byte, error) {
@@ -88,7 +76,7 @@ func (doc document) MarshalJSON() ([]byte, error) {
 		Score    float64 `json:"score"`
 	}
 
-	docJson := documentJson{doc.Filepath, doc.Score}
+	docJson := documentJson{doc.Filepath, doc.CosineSimilarity}
 
 	var byteBuffer bytes.Buffer
 	encoder := json.NewEncoder(&byteBuffer)
@@ -96,31 +84,21 @@ func (doc document) MarshalJSON() ([]byte, error) {
 	return byteBuffer.Bytes(), err
 }
 
-func (doc document) scoreFromNeedle(needle string) float64 {
-	return doc.Tfidf[needle]
-}
+func (tfidf stringScoreMap) vectorFromQuery(query queryParseResult) stringScoreMap {
+	result := make(stringScoreMap)
 
-func (doc document) scoreFromNeedleFzy(needle string) float64 {
-	var result float64
-
-	if score, ok := doc.Tfidf[needle]; ok {
-		result = score
-	} else {
-		type match struct {
-			score float64
-			fzy.ScoreResult
+	for _, needle := range query.fzyNeedles {
+		mapGetResult := fzy.MapGet(tfidf, needle)
+		bestPossibleFzyScore := uint64(float64(fzy.BestScoreFromNeedle(needle)) * 0.8)
+		if mapGetResult.ScoreResult.Score >= bestPossibleFzyScore {
+			result[mapGetResult.Key] = mapGetResult.Value
 		}
-		bestPossibleFzyScore := fzy.BestScoreFromNeedle(needle)
-		scoreWithLeeway := uint64(float64(bestPossibleFzyScore) * 0.5)
+	}
 
-		bestMatch := match{}
-		for term, score := range doc.Tfidf {
-			fzyMatch := fzy.Score(term, needle)
-			if fzyMatch.Score >= scoreWithLeeway && fzy.ScoreResultLess(bestMatch.ScoreResult, fzyMatch) {
-				bestMatch = match{score, fzyMatch}
-			}
+	for _, needle := range query.needles {
+		if score, ok := tfidf[needle]; ok {
+			result[needle] = score
 		}
-		result = bestMatch.score
 	}
 
 	return result
@@ -158,9 +136,9 @@ func index(root string) ([]document, error) {
 				fmt.Fprintf(os.Stderr, "warn: skipping \"%v\": %v\n", filepath, err)
 			} else {
 				documents = append(documents, document{
-					Filepath: filepath,
-					Terms:    termsFromString(content),
-					Tfidf:    make(stringScoreMap),
+					Filepath:    filepath,
+					Terms:       termsFromString(content),
+					TfidfVector: make(stringScoreMap),
 				})
 			}
 		}
@@ -182,12 +160,12 @@ func index(root string) ([]document, error) {
 				go func(doc *document) {
 					defer wg.Done()
 					for _, term := range doc.Terms {
-						doc.Tfidf[term] += 1.0
+						doc.TfidfVector[term] += 1.0
 					}
 
 					seen := make(map[string]bool)
 					termCount := float64(len(doc.Terms))
-					for term := range doc.Tfidf {
+					for term := range doc.TfidfVector {
 						if !seen[term] {
 							seen[term] = true
 							mutex.Lock()
@@ -195,7 +173,7 @@ func index(root string) ([]document, error) {
 							mutex.Unlock()
 						}
 
-						doc.Tfidf[term] /= termCount
+						doc.TfidfVector[term] /= termCount
 					}
 				}(&documents[i])
 			}
@@ -211,9 +189,9 @@ func index(root string) ([]document, error) {
 
 				go func(doc *document) {
 					defer wg.Done()
-					for key := range doc.Tfidf {
+					for key := range doc.TfidfVector {
 						idf := math.Log(documentCount / numberOfDocumentsContainingTermT[key])
-						doc.Tfidf[key] *= idf
+						doc.TfidfVector[key] *= idf
 					}
 				}(&documents[i])
 			}
@@ -256,51 +234,89 @@ func docsFromIndexFile() ([]document, error) {
 }
 
 type queryParseResult struct {
-	needles      []string
-	fuzzyNeedles []string
+	needles    []string
+	fzyNeedles []string
 }
 
 func queryParse(query string) queryParseResult {
 	var result queryParseResult
 
-	byteIsQuote := func(b byte) bool {
-		return b == '"' || b == '\''
+	query = strings.TrimSpace(query)
+
+	type LexState struct {
+		insideFzy bool
+		isFzy     bool
 	}
 
+	var lexState LexState
 	for i := 0; i < len(query); i += 1 {
-		var begin uint
-		var end uint
+		lexState.isFzy = false
 
-		insideQuote := false
-		if byteIsQuote(query[i]) {
-			insideQuote = true
+		var begin, end uint
+
+		for i < len(query) && (!unicode.IsLetter(rune(query[i])) && query[i] != '*') {
 			i += 1
+		}
+
+		if lexState.insideFzy || query[i] == '*' {
+			if !lexState.insideFzy {
+				i += 1
+			}
 			begin = uint(i)
+			lexState.isFzy = true
+			lexState.insideFzy = true
 			for ; i <= len(query); i += 1 {
-				if i == len(query) || byteIsQuote(query[i]) {
-					end = uint(i - 1)
+				if i >= len(query) || (!unicode.IsLetter(rune(query[i])) && query[i] != '*') {
+					end = uint(i)
+					break
+				}
+				if query[i] == '*' {
+					lexState.insideFzy = false
+					end = uint(i)
+					i += 1
 					break
 				}
 			}
-		} else {
-			begin = uint(i)
-			for ; i < len(query); i += 1 {
-				if !byteIsQuote(query[i]) {
-					end = uint(i)
-				}
-			}
+
+			goto end_tokenizing
 		}
 
-		needles := strings.Fields(query[begin : end+1])
-		for _, needle := range needles {
-			needle = strings.ToLower(needle)
-			if insideQuote {
-				result.needles = append(result.needles, needle)
+		if unicode.IsLetter(rune(query[i])) {
+			begin = uint(i)
+			for ; i <= len(query); i += 1 {
+				if i >= len(query) {
+					end = uint(len(query))
+					break
+				}
+				if !unicode.IsLetter(rune(query[i])) {
+					end = uint(i)
+					break
+				}
+			}
+			goto end_tokenizing
+		}
+
+	end_tokenizing:
+		{
+			str := query[begin:end]
+			if lexState.isFzy {
+				result.fzyNeedles = append(result.fzyNeedles, str)
 			} else {
-				result.fuzzyNeedles = append(result.fuzzyNeedles, needle)
+				stem := stemFromString(str)
+				result.needles = append(result.needles, stem)
 			}
 		}
 	}
+
+	fmt.Println("Exact Needles")
+	for _, needle := range result.needles {
+		fmt.Printf("  \"%v\"\n", needle)
+	}
+	fmt.Println("Fzy Needles")
+	for _, needle := range result.fzyNeedles {
+		fmt.Printf("  \"%v\"\n", needle)
+	}
+	fmt.Println()
 
 	return result
 }
@@ -367,34 +383,39 @@ func main() {
 				{
 					for i := range documents {
 						doc := &documents[i]
-						score := 0.0
+						doc.CosineSimilarity = 0.0
 
-						filepathContainsNeedleBonus := 0.5
-						for _, needle := range queryParseResult.needles {
-							score += doc.scoreFromNeedle(needle)
-							if strings.Contains(doc.Filepath, needle) {
-								score += filepathContainsNeedleBonus
+						queryVector := doc.TfidfVector.vectorFromQuery(queryParseResult)
+
+						// calculate cosine similarity between query and document
+						{
+							var dotProduct, normA, normB float64
+
+							for term, a := range doc.TfidfVector {
+								if b, ok := queryVector[term]; ok {
+									dotProduct += a * b
+								}
+								normA += a * a
+							}
+
+							for _, b := range queryVector {
+								normB += b * b
+							}
+
+							if normA != 0.0 && normB != 0.0 {
+								doc.CosineSimilarity = dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 							}
 						}
-
-						for _, needle := range queryParseResult.fuzzyNeedles {
-							score += doc.scoreFromNeedleFzy(needle)
-							if strings.Contains(doc.Filepath, needle) {
-								score += filepathContainsNeedleBonus
-							}
-						}
-
-						doc.Score = score
 					}
 
 					sort.Slice(documents, func(i, j int) bool {
-						return documents[j].Score < documents[i].Score
+						return documents[j].CosineSimilarity < documents[i].CosineSimilarity
 					})
 				}
 
 				var byteBuffer bytes.Buffer
 				encoder := json.NewEncoder(&byteBuffer)
-				encoder.Encode(documents[:min(len(documents), 50)])
+				encoder.Encode(documents[:min(len(documents), 100)])
 				w.Write(byteBuffer.Bytes())
 			}
 		})
@@ -403,5 +424,3 @@ func main() {
 		log.Fatal(http.ListenAndServe(":"+PORT, nil))
 	}
 }
-
-// TODO: consider the filename when ranking the results
