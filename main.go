@@ -308,15 +308,15 @@ func queryParse(query string) queryParseResult {
 		}
 	}
 
-	fmt.Println("Exact Needles")
-	for _, needle := range result.needles {
-		fmt.Printf("  \"%v\"\n", needle)
-	}
-	fmt.Println("Fzy Needles")
-	for _, needle := range result.fzyNeedles {
-		fmt.Printf("  \"%v\"\n", needle)
-	}
-	fmt.Println()
+	// fmt.Println("Exact Needles")
+	// for _, needle := range result.needles {
+	// 	fmt.Printf("  \"%v\"\n", needle)
+	// }
+	// fmt.Println("Fzy Needles")
+	// for _, needle := range result.fzyNeedles {
+	// 	fmt.Printf("  \"%v\"\n", needle)
+	// }
+	// fmt.Println()
 
 	return result
 }
