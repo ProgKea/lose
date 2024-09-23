@@ -1,7 +1,7 @@
 # Quick Start
 
 ``` shell
-go install github.com/ProgKea/lose
+go install github.com/ProgKea/lose@latest
 lose -index <path> -serve
 ```
 
